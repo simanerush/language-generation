@@ -5,8 +5,6 @@ import numpy as np
 
 from utils import LanguageModel, beam_search, SpeechDataset, one_hot, vocab_size
 
-from math import ceil
-
 from os import path
 import torch.utils.tensorboard as tb
 from tqdm import tqdm
@@ -16,7 +14,7 @@ log_dir = 'logs'
 
 # Hyperparameters
 batch_size = 128
-epochs = 1000
+epochs = 500
 learning_rate = 3e-1
 
 # Model parameters
@@ -25,9 +23,9 @@ num_channels = 50
 kernel_size = 2
 
 # Beam search parameters
-beam_size = 3
-n_results = 3
-beam_length = 50
+beam_size = 20
+n_results = 10
+beam_length = 100
 average_log_likelihood = True
 
 device = 'mps' if torch.backends.mps.is_available() else 'cpu'
@@ -138,7 +136,7 @@ def save_model(model):
 
 def load_model():
     r = TCN()
-    r.load_state_dict(torch.load(path.join(path.dirname(path.abspath(__file__)), 'tcn.th'), map_location='cpu'))
+    r.load_state_dict(torch.load(path.join(path.dirname(path.abspath(__file__)), 'tcn.th'), map_location=device))
     return r
 
 
@@ -146,12 +144,12 @@ def train():
     model = TCN().to(device)
 
     data_loader = torch.utils.data.DataLoader(
-        SpeechDataset(dataset_path='data/train.txt', transform=one_hot),
+        SpeechDataset(dataset_path='../data/train.txt', transform=one_hot),
         batch_size=batch_size,
         shuffle=True)
 
     valid_loader = torch.utils.data.DataLoader(
-        SpeechDataset(dataset_path='data/valid.txt', transform=one_hot),
+        SpeechDataset(dataset_path='../data/valid.txt', transform=one_hot),
         batch_size=batch_size,
         shuffle=True)
     

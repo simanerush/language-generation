@@ -8,7 +8,7 @@ Stores the implementation of the TCN model.
 
 Inspired by this [assignment](https://gavlegoat.github.io/cs342/makeup/).
 
-### (WIP) GPT
+### GPT
 Stores the implementation of the GPT model.
 
 Inspired by:
