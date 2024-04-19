@@ -172,8 +172,8 @@ def train():
             loss_val = loss(logits, batch.argmax(dim=1))
             acc = (logits.argmax(dim=1) == batch.argmax(dim=1)).float().mean()
 
-            train_logger.add_scalar('train/loss', loss_val.item())
-            train_logger.add_scalar('train/acc', acc.item())
+            train_logger.add_scalar('train/loss', loss_val.item(), global_step=global_step)
+            train_logger.add_scalar('train/acc', acc.item(), global_step=global_step)
 
             global_step += 1
 
