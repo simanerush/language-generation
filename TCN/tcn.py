@@ -131,12 +131,12 @@ class TCN(nn.Module, LanguageModel):
 
 
 def save_model(model):
-    return torch.save(model.state_dict(), path.join(path.dirname(path.abspath(__file__)), 'tcn.th'))
+    return torch.save(model.state_dict(), path.join(path.dirname(path.abspath(__file__)), 'tcn.pt'))
 
 
 def load_model():
     r = TCN()
-    r.load_state_dict(torch.load(path.join(path.dirname(path.abspath(__file__)), 'tcn.th'), map_location=device))
+    r.load_state_dict(torch.load(path.join(path.dirname(path.abspath(__file__)), 'tcn.pt'), map_location='cpu'))
     return r
 
 
@@ -144,12 +144,12 @@ def train():
     model = TCN().to(device)
 
     data_loader = torch.utils.data.DataLoader(
-        SpeechDataset(dataset_path='../data/train.txt', transform=one_hot),
+        SpeechDataset(dataset_path='../data/input.txt', transform=one_hot),
         batch_size=batch_size,
         shuffle=True)
 
     valid_loader = torch.utils.data.DataLoader(
-        SpeechDataset(dataset_path='../data/valid.txt', transform=one_hot),
+        SpeechDataset(dataset_path='../data/more.txt', transform=one_hot),
         batch_size=batch_size,
         shuffle=True)
     
@@ -199,7 +199,7 @@ def train():
 
 
 # Generate from the TCN model
-if path.exists(path.join(path.dirname(path.abspath(__file__)), 'tcn.th')):
+if path.exists(path.join(path.dirname(path.abspath(__file__)), 'tcn.pt')):
     load_model().generate()
 else:
     train()
