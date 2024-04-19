@@ -11,7 +11,8 @@ log_dir = 'logs'
 # Hyperparameters
 batch_size = 64 # How many independent samples to process at once
 block_size = 256 # Context size
-epochs = 1
+epochs = 5000
+eval_iters = 500
 learning_rate = 3e-4
 n_embed = 384
 n_head = 6
@@ -20,13 +21,16 @@ dropout = 0.1
 
 device = 'mps' if torch.backends.mps.is_available() else 'cpu'
 
-with open('../data/train.txt') as f:
-    train = f.read()
+# with open('../data/input.txt') as f:
+#     train = f.read()
 
-with open('../data/valid.txt') as f:
-    valid = f.read()
+# with open('../data/more.txt') as f:
+#     valid = f.read()
 
-char_set = sorted(list(set(train)))
+with open('../data/mcs.txt') as f:
+    text = f.read()
+
+char_set = sorted(list(set(text)))
 vocab_size = len(char_set)
 
 # Encoder
@@ -37,8 +41,12 @@ encode = lambda s: [stoi[c] for c in s]
 itos = { i: ch for i, ch in enumerate(char_set) }
 decode = lambda l: ''.join([itos[i] for i in l])
 
-train_data = torch.tensor(encode(train), dtype=torch.long)
-valid_data = torch.tensor(encode(valid), dtype=torch.long)
+# train_data = torch.tensor(encode(train), dtype=torch.long)
+# valid_data = torch.tensor(encode(valid), dtype=torch.long)
+data = torch.tensor(encode(text), dtype=torch.long)
+n = int(0.9*len(data))
+train_data = data[:n]
+valid_data = data[n:]
 
 
 def make_batch(data):
@@ -152,7 +160,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None):   # TODO: What is idx? Input indices
         token_emb = self.embed(idx)  # (B, T, C)
         position_emb = self.pos_embed(torch.arange(idx.shape[1], device=device))  # (T, C)
         x = token_emb + position_emb
@@ -188,58 +196,71 @@ class GPT(nn.Module):
         return idx
 
 
-def train():
-    model = GPT().to(device)
+model = GPT()
+m = model.to(device)
 
+def train():
     train_logger = tb.SummaryWriter(path.join(log_dir, 'train'), flush_secs=1)
     valid_logger = tb.SummaryWriter(path.join(log_dir, 'valid'), flush_secs=1)
 
     global_step = 0
+
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 
     for i in tqdm(range(epochs)):
-        model.train()
+
+        # Evaluate the model according to the evaluation interval
+        if i % eval_iters == 0 or i == epochs - 1: 
+            val_loss = 0
+            train_loss = 0
+            with torch.no_grad():
+                model.eval()
+                train_losses = torch.zeros(eval_iters)
+                for k in range(eval_iters):
+                    xb, yb = make_batch(train_data)
+                    _, loss = model(xb, yb)
+                    train_losses[k] = loss.item()
+                train_loss = train_losses.mean()
+
+                val_losses = torch.zeros(eval_iters)
+                for k in range(eval_iters):
+                    xb, yb = make_batch(valid_data)
+                    _, loss = model(xb, yb)
+                    val_losses[k] = loss.item()
+                
+                val_loss = val_losses.mean()
+
+                model.train()
+                valid_logger.add_scalar('valid/loss', val_loss.item(), global_step=global_step)
+                train_logger.add_scalar('train/loss', train_loss.item(), global_step=global_step)
+
+                print("Epoch: ", i, "Training Loss: ", train_loss.item(), "Validation Loss: ", val_loss.item())
+
+        global_step += 1
 
         xb, yb = make_batch(train_data)
 
         _, loss = model(xb, yb)
-
-        train_logger.add_scalar('train/loss', loss.item())
-        
-        global_step += 1
-
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)  # TODO: Why set to none?
         loss.backward()
         optimizer.step()
-
-        model.eval()
-        with torch.no_grad():
-            xb, yb = make_batch(valid_data)
-            _, val_loss = model(xb, yb)
-            valid_logger.add_scalar('valid/loss', val_loss.item())
-
-        scheduler.step()
-
-        if (i + 1) % 5 == 0:
-            print("Epoch: ", i, "Training Loss: ", loss.item(), "Validation Loss: ", val_loss.item())
-
+            
     save_model(model)
 
+
 def save_model(model):
-    return torch.save(model.state_dict(), path.join(path.dirname(path.abspath(__file__)), 'gpt.th'))
+    return torch.save(model.state_dict(), path.join(path.dirname(path.abspath(__file__)), 'gpt.pt'))
 
 
 def load_model():
     r = GPT()
-    r.load_state_dict(torch.load(path.join(path.dirname(path.abspath(__file__)), 'gpt.th'), map_location=device))
+    r.load_state_dict(torch.load(path.join(path.dirname(path.abspath(__file__)), 'gpt.pt'), map_location=device))
     return r
 
-
 # Generate from the GPT model
+# Start with an empty context
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-if path.exists(path.join(path.dirname(path.abspath(__file__)), 'gpt.th')):
-    print(decode(load_model().generate(context, 10))[0].toList())
-else:
+if not path.exists(path.join(path.dirname(path.abspath(__file__)), 'gpt.pt')):
     train()
-    print(decode(load_model().generate(context, 10))[0].toList())
+m = load_model().to(device)
+print(decode(m.generate(context, 1000)[0].tolist()))
