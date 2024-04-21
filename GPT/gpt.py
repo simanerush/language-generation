@@ -9,40 +9,34 @@ from os import path
 log_dir = 'logs'
 
 # Hyperparameters
-batch_size = 64 # How many independent samples to process at once
-block_size = 256 # Context size
-epochs = 5000
-eval_iters = 500
+batch_size = 64  # How many independent samples to process at once
+block_size = 256  # Context length
+epochs = 5000  # Number of epochs
+eval_iters = 500  # The interval at which to evaluate the model
 learning_rate = 3e-4
-n_embed = 384
-n_head = 6
-n_layer = 6
-dropout = 0.1
+n_embed = 384  # Number of embeddings in the embedding space
+n_head = 6  # Number of attention heads
+n_layer = 6  # Number of transformer blocks
+dropout = 0.1  # Dropout rate
 
 device = 'mps' if torch.backends.mps.is_available() else 'cpu'
 
-# with open('../data/input.txt') as f:
-#     train = f.read()
-
-# with open('../data/more.txt') as f:
-#     valid = f.read()
-
+# Load all MCs
 with open('../data/mcs.txt') as f:
     text = f.read()
 
-char_set = sorted(list(set(text)))
-vocab_size = len(char_set)
+char_set = sorted(list(set(text)))  # Get the unique characters
+vocab_size = len(char_set)  # Get the number of unique characters
 
-# Encoder
+# Encoder - Map characters to integers
 stoi = { ch: i for i, ch in enumerate(char_set) }
 encode = lambda s: [stoi[c] for c in s]
 
-# Decoder
+# Decoder - Map integers to characters
 itos = { i: ch for i, ch in enumerate(char_set) }
 decode = lambda l: ''.join([itos[i] for i in l])
 
-# train_data = torch.tensor(encode(train), dtype=torch.long)
-# valid_data = torch.tensor(encode(valid), dtype=torch.long)
+# Split the data into training and validation sets
 data = torch.tensor(encode(text), dtype=torch.long)
 n = int(0.9*len(data))
 train_data = data[:n]
@@ -50,9 +44,16 @@ valid_data = data[n:]
 
 
 def make_batch(data):
-    ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([data[i:i+block_size] for i in ix])
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    """
+    Create batches of multiple "chunks" of data, represented as stacks, to put 
+    the chunks into the rows. Note that each input-target pair is considered
+    independent by the transformer.
+
+    :param data: The data to create batches from
+    """
+    ix = torch.randint(len(data) - block_size, (batch_size,))  # Get random indices (offsets into the data set) to get the chunks from
+    x = torch.stack([data[i:i+block_size] for i in ix])  # The first block_size characters
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix])  # The next block_size characters, the "targets" to predict
     x, y = x.to(device), y.to(device)
     return x, y
     
@@ -67,10 +68,10 @@ class MultiHeadAttention(nn.Module):
         """
         def __init__(self, head_size):
             super().__init__()
-            self.key = nn.Linear(n_embed, head_size, bias=False)
-            self.query = nn.Linear(n_embed, head_size, bias=False)
-            self.value = nn.Linear(n_embed, head_size, bias=False)
-            self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+            self.key = nn.Linear(n_embed, head_size, bias=False)  # Key tells what the token contains
+            self.query = nn.Linear(n_embed, head_size, bias=False)  # Query tells what the token is looking for
+            self.value = nn.Linear(n_embed, head_size, bias=False)  # The actual content of the token positioned in the embedding space.
+            self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))  # Register the triangular matrix.
             self.dropout = nn.Dropout(dropout)
         
         def forward(self, x):
@@ -80,20 +81,21 @@ class MultiHeadAttention(nn.Module):
             q = self.query(x)
 
             # Compute "affinities"
-            wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5  # (B, T, hs) @ (B, hs, T) -> (B, T, T)
-            wei = wei.masked_fill(self.tril[:x.shape[1], :x.shape[1]] == 0, float('-inf'))  # (B, T, T)
-            wei = F.softmax(wei, dim=-1)
-            wei = self.dropout(wei)
+            wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5  # (B, T, hs) @ (B, hs, T) -> (B, T, T) compute the dot product between the queries and the keys to figure out how the keys "attend" to the queries
+            wei = wei.masked_fill(self.tril[:x.shape[1], :x.shape[1]] == 0, float('-inf'))  # (B, T, T) fill the zeroes with -inf. This prevents forward information flow.
+            wei = F.softmax(wei, dim=-1)  # Take softmax to normalize the weights
+            wei = self.dropout(wei)  # Apply dropout
 
             # Aggregation
+            # This makes the tokens "communicate" with each other. The weights are used to determine how much each token should "listen" to the other tokens.
             v = self.value(x)  # (B, T, hs)
-            out = wei @ v  # (B, T, T) @ (B, T, hs) -> (B, T, hs)
+            out = wei @ v  # (B, T, T) @ (B, T, hs) -> (B, T, hs) <- here, each row of out is a weighted sum of the previous rows of v
             return out
 
     def __init__(self, n_head, head_size):
         super().__init__()
         self.heads = nn.ModuleList([MultiHeadAttention.Head(head_size) for _ in range(n_head)])
-        self.proj = nn.Linear(head_size * n_head, n_embed)
+        self.proj = nn.Linear(head_size * n_head, n_embed)  # Projection back to the residual pattern
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
@@ -102,14 +104,14 @@ class MultiHeadAttention(nn.Module):
         return out
     
 
-class FeedForward(nn.Module):  # TODO: Why do we need this?
+class FeedForward(nn.Module):
     """
-    A linear feed-forward network with ReLU activation.
+    A simple multi-layer perceptron.
     """
     def __init__(self, n_embed):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embed, 4 * n_embed),
+            nn.Linear(n_embed, 4 * n_embed),  # We multiply by 4 because the inner layer of the FFD network is 4 times the size of the input layer according to the paper
             nn.ReLU(),
             nn.Linear(4 * n_embed, n_embed),
             nn.Dropout(dropout)
@@ -130,22 +132,26 @@ class GPT(nn.Module):
         """
 
         def __init__(self, n_embed, n_head):
+            """
+            :param n_embed: The number of embeddings in the embedding space
+            :param n_head: The number of attention heads
+            """
             super().__init__()
             head_size = n_embed // n_head
             self.sa = MultiHeadAttention(n_head, head_size)
-            self.ffd = FeedForward(n_embed)
-            self.norm1 = nn.LayerNorm(n_embed)
+            self.ffd = FeedForward(n_embed)  # Call the MLP network on a per-token level. Once the tokens gathered the information in the attention step, they need to "think" about it.
+            self.norm1 = nn.LayerNorm(n_embed)  # LayerNorm normalizes the rows instead of the columns. This is important because we want to normalize the tokens, not the features.
             self.norm2 = nn.LayerNorm(n_embed)
         
         def forward(self, x):
             x = x + self.sa(self.norm1(x))
-            x = x + self.ffd(self.norm2(x))
+            x = x + self.ffd(self.norm2(x))  # Residual connection
             return x
         
     def __init__(self):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, n_embed)
-        self.pos_embed = nn.Embedding(block_size, n_embed)
+        self.pos_embed = nn.Embedding(block_size, n_embed)  # Add a notion of space to the vector.
         self.blocks = nn.Sequential(*[GPT.Block(n_embed, n_head) for _ in range(n_layer)])
         self.norm = nn.LayerNorm(n_embed)
         self.head = nn.Linear(n_embed, vocab_size)
@@ -160,16 +166,16 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):   # TODO: What is idx? Input indices
+    def forward(self, idx, targets=None):
         token_emb = self.embed(idx)  # (B, T, C)
         position_emb = self.pos_embed(torch.arange(idx.shape[1], device=device))  # (T, C)
-        x = token_emb + position_emb
+        x = token_emb + position_emb  # Move the token in the embedding space
         x = self.blocks(x)
         x = self.norm(x)  # (B, T, C)
 
         logits = self.head(x)  # (B, T, V)
 
-        if targets is not None:  # TODO: what are targets?
+        if targets is not None:
             B, T, C = logits.shape
             logits = logits.view(B*T, C)
             targets = targets.view(B*T)
@@ -200,6 +206,7 @@ model = GPT()
 m = model.to(device)
 
 def train():
+    # The code here is similar to what we've done in class.
     train_logger = tb.SummaryWriter(path.join(log_dir, 'train'), flush_secs=1)
     valid_logger = tb.SummaryWriter(path.join(log_dir, 'valid'), flush_secs=1)
 
@@ -263,4 +270,4 @@ context = torch.zeros((1, 1), dtype=torch.long, device=device)
 if not path.exists(path.join(path.dirname(path.abspath(__file__)), 'gpt.pt')):
     train()
 m = load_model().to(device)
-print(decode(m.generate(context, 1000)[0].tolist()))
+print(decode(m.generate(context, 1500)[0].tolist()))
