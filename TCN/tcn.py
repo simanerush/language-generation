@@ -144,12 +144,12 @@ def train():
     model = TCN().to(device)
 
     data_loader = torch.utils.data.DataLoader(
-        SpeechDataset(dataset_path='../data/input.txt', transform=one_hot),
+        SpeechDataset(dataset_path='../data/mcs.txt', transform=one_hot),
         batch_size=batch_size,
         shuffle=True)
 
     valid_loader = torch.utils.data.DataLoader(
-        SpeechDataset(dataset_path='../data/more.txt', transform=one_hot),
+        SpeechDataset(dataset_path='../data/mcs_more.txt', transform=one_hot),
         batch_size=batch_size,
         shuffle=True)
     
