@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import coremltools as ct
+
+from torchsummary import summary
+
 import torch.utils.tensorboard as tb
 from tqdm import tqdm
 from os import path
@@ -270,4 +274,38 @@ context = torch.zeros((1, 1), dtype=torch.long, device=device)
 if not path.exists(path.join(path.dirname(path.abspath(__file__)), 'gpt.pt')):
     train()
 m = load_model().to(device)
-print(decode(m.generate(context, 1500)[0].tolist()))
+output = m.generate(context, 1000)[0].tolist()
+# print(summary(m, (1, 1), dtypes=[torch.long], device=device))
+
+
+
+class WrappedGPT(nn.Module):
+    def __init__(self):
+        super(WrappedGPT, self).__init__()
+        gpt = load_model().to(device)
+        self.wrapped = gpt
+    
+    def forward(self, idx, targets=None):
+        logits, _ = self.wrapped(idx, targets)
+        return logits
+
+
+wrapped = WrappedGPT().eval()
+
+# Trace the model
+i = torch.zeros(1, block_size, dtype=torch.long, device=device)
+model = torch.jit.trace(wrapped, i)
+
+# Convert to CoreML
+
+if not path.exists(path.join(path.dirname(path.abspath(__file__)), 'GPT.mlmodel')):
+    print("Converting to CoreML...")
+
+    # Note that CoreML does not support int64 :(
+    mlmodel = ct.convert(
+        model,
+        inputs=[ct.TensorType(shape=i.shape)],
+        convert_to="neuralnetwork"
+    )
+
+    mlmodel.save("GPT.mlmodel")
